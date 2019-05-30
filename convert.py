@@ -69,7 +69,7 @@ container = av.open(sys.argv[1])
 container.streams.video[0].thread_type = 'AUTO'
 
 out_container = av.open(sys.argv[2], 'w')
-out_stream = out_container.add_stream(settings.codec, framerate=container.streams.video[0].framerate)
+out_stream = out_container.add_stream(settings.codec)
 out_stream.width = settings.width
 out_stream.height = settings.height
 out_stream.pix_fmt = settings.pix_fmt
