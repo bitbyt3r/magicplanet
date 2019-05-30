@@ -1,8 +1,10 @@
-import os
-
+import av
+import sys
 import moderngl
 import numpy as np
 from PIL import Image
+
+import settings
 
 ctx = moderngl.create_standalone_context()
 
@@ -45,28 +47,54 @@ vertices = np.array([
     1.0, 1.0,
 ])
 vbo = ctx.buffer(vertices.astype('f4').tobytes())
-render_indicies = np.array([
-    0, 1, 2,
-    1, 2, 3
-])
-ibo = ctx.buffer(render_indicies.astype('i4').tobytes())
-vao = ctx.simple_vertex_array(prog, vbo, 'in_vert', index_buffer=ibo)
+vao = ctx.simple_vertex_array(prog, vbo, 'in_vert')
 
 def render(frame):
     ctx.clear(1.0, 1.0, 1.0)
     ctx.enable(moderngl.DEPTH_TEST)
 
-    img = frame.convert('RGB')
+    img = frame.to_image().convert('RGB')
     texture = ctx.texture(img.size, 3, img.tobytes())
     texture.build_mipmaps()
     texture.use()
 
-    fbo = ctx.simple_framebuffer((512,512))
+    fbo = ctx.simple_framebuffer((settings.width, settings.height))
     fbo.use()
     fbo.clear(0.0, 0.0, 0.0, 1.0)
 
-    vao.render()
-    Image.frombytes('RGB', fbo.size, fbo.read(), 'raw', 'RGB', 0, -1).show()
+    vao.render(moderngl.TRIANGLE_STRIP)
+    return np.array(Image.frombytes('RGB', fbo.size, fbo.read(), 'raw', 'RGB', 0, -1))
 
-frame = Image.open("./earth.jpg")
-render(frame)
+container = av.open(sys.argv[1])
+container.streams.video[0].thread_type = 'AUTO'
+
+out_container = av.open(sys.argv[2], 'w')
+out_stream = out_container.add_stream(settings.codec, framerate=container.streams.video[0].framerate)
+out_stream.width = settings.width
+out_stream.height = settings.height
+out_stream.pix_fmt = settings.pix_fmt
+
+if len(container.streams.audio) > 0:
+    audio = container.streams.audio[0]
+    out_audio = out_container.add_stream(template=audio)
+    for packet in container.demux(audio):
+        if packet.dts is None:
+            continue
+        packet.stream = out_audio
+        out_container.mux(packet)
+
+container.close()
+container = av.open(sys.argv[1])
+container.streams.video[0].thread_type = 'AUTO'
+for frame in container.decode(video=0):
+    out_frame = av.VideoFrame.from_ndarray(render(frame))
+    for packet in out_stream.encode(out_frame):
+        out_container.mux(packet)
+
+# Flush stream
+for packet in out_stream.encode():
+    out_container.mux(packet)
+
+# Close the file
+out_container.close()
+container.close()
